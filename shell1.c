@@ -2,8 +2,11 @@
 #include "stdlib.h"
 #include <unistd.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 
+#define STRLEN 256
 #define ARGNUM 50
 
 struct arg
@@ -17,6 +20,9 @@ struct arg
 struct arg* next_arg_init(struct arg* cur_arg);
 struct arg* read_string();
 struct arg* parser(struct arg* arg , char* string);
+void execution(struct arg* arg);
+void wait_all(struct arg* arg);
+void destroy_arg(struct arg* arg);
 
 int main()
 {
@@ -24,9 +30,15 @@ struct arg* arg;
 while(1)
 {
         printf("InspectorShell$ ");
-	fflush(NULL);
-        int num_arg = 0;
         arg = read_string();
+	if(arg == NULL)
+		continue;
+
+	//printf("%s %s\n" , arg->com_arg[0] , arg->com_arg[1] );
+
+	execution(arg);
+	wait_all(arg);
+	destroy_arg(arg);
 
 	//sleep(1);
 }
@@ -51,14 +63,33 @@ struct arg* next_arg_init(struct arg* cur_arg)
 
 struct arg* read_string()
 {
-	char* string;
+	char* string = calloc(STRLEN , sizeof(char));
+	
+	char* c = fgets(string, STRLEN, stdin);
+	if(c == NULL)
+		exit(0);
+	/*
 	int x = scanf("%m[^\n]" , &string);
-	getchar();			// get \n;
-	//printf("%d\n" , x);
-	if(x == 0)
+	if(x = EOF)
+		exit(0);
+	getchar();
+	//printf("%d\n" , x);*/
+	if(string[0] == '\n')
+	{
+		free(string);
 		return NULL;
-	else	
-		return parser(NULL , string);
+	}
+	else if(!strcmp(string , "exit\n"))
+	{
+		free(string);
+		exit(0);
+	}
+	else
+	{
+		struct arg* arg = parser(NULL , string);
+		free(string);
+		return arg;
+	}
 }
 
 
@@ -68,7 +99,7 @@ struct arg* arg = next_arg_init(a);
 char c;
 int shift = 0;
 int was_command = 0;
-for(; strlen(string) != 0 ; string++)
+for( ; strlen(string) != 1 ; string++)
 {
 	if(*string == ' ')
 	{
@@ -80,20 +111,22 @@ for(; strlen(string) != 0 ; string++)
 	{
 	//	printf("new command\n");
 		next_arg_init(arg);
-		arg = parser(arg , ++string);
+		if(NULL == parser(arg , ++string))
+			return NULL;
 		break;
 	}
 	else if((*string == '|') && !was_command)
 	{
-		printf("empty command\n");
-		fflush(NULL);
+		//printf("empty command\n");
 		return NULL;
 	}
 	
 	else if(!was_command)
 	{
 	//	printf("command: ");
-		shift = sscanf(string , "%m[^ ^|^\n]" , &(arg->command));
+		sscanf(string , "%m[^ ^|^\n]" , &(arg->command));
+		sscanf(string , "%m[^ ^|^\n]" , &(arg->com_arg[arg->num_com_arg]));
+		(arg->num_com_arg)++;
 		string += strlen(arg->command) - 1;
 		was_command = 1;
 	//	printf("%s\n" , arg->command);
@@ -112,9 +145,92 @@ for(; strlen(string) != 0 ; string++)
 
 }
 
-if(!was_command)
+if(!was_command )
 	return NULL;
 return arg;
 }
 
 
+
+void execution(struct arg* arg)
+{
+pid_t id;
+int fd[2] , com_fd = -1;
+int is_first = 1;
+do
+{
+	if(!is_first)
+		arg = arg->next;
+	pipe(fd);
+	id = fork();
+	if(id == 0)
+	{
+	//child
+		close(fd[0]);
+		if(!is_first)
+		{
+			close(0);
+			dup2(com_fd , 0);
+			close(com_fd);
+		}
+		if(arg->next != NULL)
+		{
+			close(1);
+			dup2(fd[1] , 1);
+			close(fd[1]);
+		}
+//		printf("%s %s\n" , arg->com_arg[0] , arg->com_arg[1]);
+		fflush(NULL);	
+		execvp(arg->command , arg->com_arg);
+	}	
+	else
+	{
+	//parent
+		if(com_fd != -1)
+			close(com_fd);
+		com_fd = fd[0];
+		close(fd[1]);
+	}
+	is_first = 0;
+
+}
+while(arg->next != NULL);
+
+}
+
+
+
+
+
+void wait_all(struct arg* arg)
+{
+wait(0);
+while(arg->next != NULL)
+{
+	wait(0);
+	arg = arg->next;
+}
+}
+
+
+void destroy_arg(struct arg* arg)
+{
+	if(arg->next != NULL)
+		destroy_arg(arg->next);
+	for(int i = 0 ; i < arg->num_com_arg ; i++)
+		free(arg->com_arg[i]);
+	
+	free(arg->command);
+
+	if(arg->next != NULL)
+		free(arg->next);
+
+}
+
+
+
+
+
+
+
+ 
