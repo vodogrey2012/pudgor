@@ -4,28 +4,44 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
       
 #define READY SIGUSR1
 #define BIT0 SIGUSR2
 #define BIT1 SIGUSR1 
-
+#define LENSTR 1
 
 // SIGUSR1 - 1 bit; answer from parent, that it is ready to get new signal
 // SIGUSR2 - 0 bit
+
+
+char bit = 0;
+int first_parent_signal = 0;
 
 
 
 void send_char(char c , sigset_t waitmask , sigset_t actmask);
 void parent(pid_t pid , sigset_t waitmask , sigset_t actmask);
 void child(int file , sigset_t waitmask , sigset_t actmask);
-int open_file(char* name);
 void sig_bit(int signo);
 int out_char();
+int open_file(char* file_name);
 void print_char(char out_char);
 void sig_empty(int sigio);
 void parent_sent(int sigio);
 void signal_init(sigset_t waitmask , sigset_t actmask);
+
+
+void parent_sent(int sigio){
+        first_parent_signal = 1;
+};
+
+
+void sig_empty(int sigio){
+};
+
 
 int main(int argc , char* argv[])
 {
@@ -43,15 +59,16 @@ int main(int argc , char* argv[])
 	}
 	else
 	{
-		//file = open_file(argv[1]);
+		file = open_file(argv[1]);
 		child(file , waitmask , actmask);
-		//close(file);
+		close(file);
 	}
 	wait(0);
 	return 0;	
 
 
 }
+
 
 void signal_init(sigset_t waitmask , sigset_t actmask)
 {
@@ -67,33 +84,49 @@ void signal_init(sigset_t waitmask , sigset_t actmask)
 }
 
 
-
-int first_parent_signal = 0;
-
-void parent_sent(int sigio){
-	first_parent_signal = 1;
-};
-
-
-void sig_empty(int sigio){
-};
-
-
-
-void send_char(char c , sigset_t waitmask , sigset_t actmask) // for child
+void child(int file , sigset_t waitmask , sigset_t actmask)
 {
-        signal(BIT1 , sig_empty);
-        signal(BIT0 , sig_empty);
+        char* str = (char*)calloc(LENSTR , sizeof(char));
+	signal(READY , sig_empty);	
+	int a = 1 , i; 
+	while(a > 0)
+        {
+		a = read(file , str , LENSTR);
+        	for(i = 0 ; i < a ; i++)
+			send_char(str[i] , waitmask , actmask);
+	}
+		
+}
+ 
+
+void parent(pid_t pid , sigset_t waitmask , sigset_t actmask)
+{
+        signal(BIT0 , sig_bit);
+        signal(BIT1 , sig_bit);
+
+        while(1)
+        {
 
 
+                kill(pid , READY);
+		alarm(1);
+                sigsuspend(&actmask);
+
+                if(!out_char())
+                        break;
+        }
+
+}
+
+
+void send_char(char c , sigset_t waitmask , sigset_t actmask) 
+{
 	int i = 128;
 	pid_t pid = getppid();
 
-	signal(READY , sig_empty);
 
 	for(i = 128 ; i > 0 ; i /= 2) 
 	{
-	
 		if(first_parent_signal)
 			first_parent_signal = 0;
 		else
@@ -107,40 +140,9 @@ void send_char(char c , sigset_t waitmask , sigset_t actmask) // for child
 		{
             		kill(pid, BIT0);
 		}
-		
-
 	}
 }
 
-
-void child(int file , sigset_t waitmask , sigset_t actmask)
-{
-	char str[] = "hello\n";
-	int i = 0;
-	for( i = 0 ; str[i] ; i++)
-		send_char(str[i] , waitmask , actmask);
-}
-
-char bit = 0;
-
-void parent(pid_t pid , sigset_t waitmask , sigset_t actmask)
-{
-	signal(BIT0 , sig_bit);
-        signal(BIT1 , sig_bit);
-
-	while(1)
-	{
-		
-
-		kill(pid , READY); 
-		
-		sigsuspend(&actmask);
-
-		if(!out_char())
-			break;
-	}
-
-}
 
 void sig_bit(int signo)
 {
@@ -157,11 +159,11 @@ void sig_bit(int signo)
 
 }
 
+
 int out_char()
 {
 	static int out_char = 0;
 	static int counter = 128;
-
 	if(bit == 0)
 	{
 		counter/=2;
@@ -171,27 +173,28 @@ int out_char()
 		out_char += counter;
     		counter /= 2;
 	}
-	
 	if(!counter)
 	{
-		print_char(out_char);
+		write(STDOUT_FILENO , &out_char , 1); 
 		counter = 128;
-		if(out_char)
-			out_char = 0;
-		else 
-			return 0;	
+		out_char = 0;
+		fflush(NULL);
 	}
-
+	
 	return 1;	
 }
 
-void print_char(char out_char)
+
+int open_file(char* file_name)
 {
-	printf("%c" , out_char);
-	fflush(NULL);
+	int file_discriptor = open(file_name , O_RDONLY);
+	if(file_discriptor == -1)
+	{
+		printf("Invalid file name");
+		exit(0);
+	}
+	return file_discriptor;
 }
-
-
 
 
 
